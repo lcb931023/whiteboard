@@ -3,6 +3,7 @@ import {
   INKS, bounds, contains, hits, placeSketch, revealProgress, screenToWorld, strokePath, translate,
   type Box, type Ink, type Point, type Stroke, type View,
 } from "./board";
+import { InvalidKeyError, KEY_STORAGE, sketchFromText } from "./sketch";
 
 const STORAGE_KEY = "whiteboard:strokes";
 const PEN_SIZE = 4;
@@ -15,9 +16,17 @@ const PASTE_OFFSET = 24;
 type Tool = "select" | "pen" | "eraser" | "hand";
 type Pending = { prompt: string; strokes: number[][] };
 
+function readStorage(key: string) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
 function loadStrokes(): Stroke[] {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
+    return JSON.parse(readStorage(STORAGE_KEY) ?? "[]");
   } catch {
     return [];
   }
@@ -37,6 +46,8 @@ export default function App() {
   const [pending, setPending] = useState<Pending | null>(null);
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [apiKey, setApiKey] = useState(() => readStorage(KEY_STORAGE) ?? "");
+  const [keyOpen, setKeyOpen] = useState(false);
 
   // Fast-changing values live in refs so pointer moves don't re-render React.
   const pointer = useRef<Point>([innerWidth / 2, innerHeight / 2]);
@@ -270,7 +281,14 @@ export default function App() {
     const clip = clipboard.current;
     if (!clip) return;
     const [minX, minY, maxX, maxY] = bounds(clip.strokes);
-    const cursor = screenToWorld(pointer.current, view);
+    const saveKey = (key: string) => {
+    setApiKey(key);
+    try {
+      localStorage.setItem(KEY_STORAGE, key);
+    } catch {}
+  };
+
+  const cursor = screenToWorld(pointer.current, view);
     const overSource = contains([minX, minY, maxX, maxY], cursor);
     clip.pastes++;
     const [dx, dy] = overSource
@@ -286,16 +304,15 @@ export default function App() {
     e.preventDefault();
     const text = prompt.trim();
     if (!text || status?.kind === "loading") return;
+    if (!apiKey) return setKeyOpen(true);
     inputRef.current?.blur();
     setStatus({ kind: "loading", text: `Sketching ${text}…` });
     try {
-      const res = await fetch("/api/sketch", { method: "POST", body: JSON.stringify({ prompt: text }) });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setPending({ prompt: text, strokes: data.strokes });
+      setPending({ prompt: text, strokes: await sketchFromText(text, apiKey) });
       setPrompt("");
       setStatus(null);
     } catch (err) {
+      if (err instanceof InvalidKeyError) setKeyOpen(true);
       setStatus({ kind: "error", text: err instanceof Error ? err.message : "Something went wrong" });
     }
   };
@@ -339,6 +356,13 @@ export default function App() {
     if (tool !== "select") setSelected(new Set());
   }, [tool]);
 
+  const saveKey = (key: string) => {
+    setApiKey(key);
+    try {
+      localStorage.setItem(KEY_STORAGE, key);
+    } catch {}
+  };
+
   const cursor = pending ? "copy" : spaceHeld || tool === "hand" ? (gesture.current ? "grabbing" : "grab") : tool === "eraser" ? "none" : tool === "select" ? "default" : "crosshair";
 
   return (
@@ -364,6 +388,17 @@ export default function App() {
         <p className="empty">Draw anything, or type below to have it sketched for you</p>
       )}
 
+      {keyOpen && (
+        <form className="keybar" onSubmit={(e) => { e.preventDefault(); setKeyOpen(false); if (prompt.trim()) sketch(e); }}>
+          <label htmlFor="api-key">Anthropic API key · stored only in this browser</label>
+          <input id="api-key" type="password" value={apiKey} onChange={(e) => saveKey(e.target.value.trim())} placeholder="sk-ant-…" autoComplete="off" spellCheck={false} autoFocus />
+          <p>
+            Sketches are requested straight from your browser to Anthropic.{" "}
+            <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">Get a key</a>
+          </p>
+        </form>
+      )}
+
       <div className="toolbar">
         <div className="group">
           <ToolButton active={tool === "select"} onClick={() => setTool("select")} label="Select (V) · ⌘C / ⌘V to copy & paste" icon="M5 3l14 8-6 1.5L10 19z" />
@@ -379,6 +414,7 @@ export default function App() {
         <form className="sketch" onSubmit={sketch}>
           <svg viewBox="0 0 24 24" aria-hidden><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" /></svg>
           <input ref={inputRef} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Sketch a bicycle…  ( / )" disabled={status?.kind === "loading"} />
+          <ToolButton active={keyOpen} onClick={() => setKeyOpen((open) => !open)} label={apiKey ? "API key" : "Add an API key to sketch from text"} icon="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.7 5.7L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.6a1 1 0 01.3-.7l6-6A6 6 0 1121 9z" />
         </form>
         <div className="group">
           <ToolButton onClick={undo} disabled={!undoStack.length} label="Undo (⌘Z)" icon="M9 14L4 9l5-5M4 9h11a5 5 0 010 10h-3" />
@@ -392,7 +428,7 @@ export default function App() {
 
 function ToolButton({ icon, label, active, ...props }: { icon: string; label: string; active?: boolean; onClick: () => void; disabled?: boolean }) {
   return (
-    <button className={`tool ${active ? "active" : ""}`} title={label} aria-label={label} {...props}>
+    <button type="button" className={`tool ${active ? "active" : ""}`} title={label} aria-label={label} {...props}>
       <svg viewBox="0 0 24 24" aria-hidden><path d={icon} /></svg>
     </button>
   );

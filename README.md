@@ -6,8 +6,10 @@ A minimal infinite whiteboard. Draw freehand, or type a short description ("a bi
 
 ```sh
 npm install
-npm run dev          # netlify dev → http://localhost:8888 (needs ANTHROPIC_API_KEY)
+npm run dev
 ```
+
+Sketching from text uses your own Anthropic API key: click the key icon in the toolbar to add one. It is stored in this browser's localStorage and sent only to Anthropic, straight from the browser. Pushes to `main` deploy to GitHub Pages.
 
 ## Controls
 
@@ -22,4 +24,4 @@ npm run dev          # netlify dev → http://localhost:8888 (needs ANTHROPIC_AP
 | Undo / Redo | `⌘Z` / `⇧⌘Z` |
 | Pan / Zoom | scroll / `⌘`+scroll or pinch |
 
-Strokes are saved in localStorage. The sketch endpoint lives in `netlify/functions/sketch.mts`.
+Strokes are saved in localStorage. The sketch prompt lives in `src/sketch.ts`.
