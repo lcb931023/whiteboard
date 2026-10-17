@@ -13,7 +13,21 @@ const REVEAL_MS = 260;
 
 const outlineCache = new WeakMap<Stroke, Path2D>();
 
-function outline(points: Point[], size: number, simulatePressure: boolean) {
+/**
+ * Adds points along long segments so no two are more than `step` apart. perfect-freehand's streamline pulls
+ * each point toward the previous one, which cuts corners and skews shapes defined by only a few points.
+ */
+function densify(points: Point[], step: number): Point[] {
+  return points.flatMap((p, i) => {
+    const next = points[i + 1];
+    if (!next) return [p];
+    const n = Math.ceil(Math.hypot(next[0] - p[0], next[1] - p[1]) / step);
+    return Array.from({ length: n }, (_, k): Point => [p[0] + ((next[0] - p[0]) * k) / n, p[1] + ((next[1] - p[1]) * k) / n]);
+  });
+}
+
+function outline(sparsePoints: Point[], size: number, simulatePressure: boolean) {
+  const points = densify(sparsePoints, size);
   const polygon = getStroke(points, { size, thinning: 0.5, smoothing: 0.5, streamline: 0.4, simulatePressure });
   const path = new Path2D();
   polygon.forEach(([x, y], i) => (i ? path.lineTo(x, y) : path.moveTo(x, y)));
